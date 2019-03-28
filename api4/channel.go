@@ -1137,6 +1137,28 @@ func addChannelMember(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var permittedUsers []*model.User
+	if channel.GroupConstrained != nil && *channel.GroupConstrained {
+		permittedUsers, err = c.App.GetUsersPermittedToChannel(channel.Id)
+		if err != nil {
+			c.Err = err
+			return
+		}
+
+		userPermitted := false
+		for _, pu := range permittedUsers {
+			if pu.Id == member.UserId {
+				userPermitted = true
+				break
+			}
+		}
+
+		if !userPermitted {
+			c.Err = model.NewAppError("addChannelMember", "api.channel.add_members.user_denied", map[string]interface{}{"UserID": member.UserId}, "", http.StatusBadRequest)
+			return
+		}
+	}
+
 	cm, err := c.App.AddChannelMember(member.UserId, channel, c.App.Session.UserId, postRootId, c.App.Session.Id)
 	if err != nil {
 		c.Err = err

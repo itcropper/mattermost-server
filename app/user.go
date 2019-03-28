@@ -596,6 +596,26 @@ func (a *App) GetUsersWithoutTeam(offset int, limit int) ([]*model.User, *model.
 	return result.Data.([]*model.User), nil
 }
 
+// GetUsersPermittedToTeam returns the users who are permitted to join a team based on group constraints. If the
+// given team is not group-constrained then an empty slice will be returned.
+func (a *App) GetUsersPermittedToTeam(teamID string) ([]*model.User, *model.AppError) {
+	result := <-a.Srv.Store.User().GetUsersPermittedToTeam(teamID)
+	if result.Err != nil {
+		return nil, result.Err
+	}
+	return result.Data.([]*model.User), nil
+}
+
+// GetUsersPermittedToChannel returns the users who are permitted to join a channel based on group constraints. If
+// the given channel is not group-constrained then an empty slice will be returned.
+func (a *App) GetUsersPermittedToChannel(channelID string) ([]*model.User, *model.AppError) {
+	result := <-a.Srv.Store.User().GetUsersPermittedToChannel(channelID)
+	if result.Err != nil {
+		return nil, result.Err
+	}
+	return result.Data.([]*model.User), nil
+}
+
 func (a *App) GetUsersByIds(userIds []string, asAdmin bool) ([]*model.User, *model.AppError) {
 	result := <-a.Srv.Store.User().GetProfileByIds(userIds, true)
 	if result.Err != nil {

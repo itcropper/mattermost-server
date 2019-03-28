@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/mattermost/mattermost-server/app"
 	"github.com/mattermost/mattermost-server/model"
 )
 
@@ -19,6 +20,14 @@ const (
 	MAX_ADD_MEMBERS_BATCH    = 20
 	MAXIMUM_BULK_IMPORT_SIZE = 10 * 1024 * 1024
 )
+
+type invalidUserIDError struct {
+	UserID string
+}
+
+func (e invalidUserIDError) Error() string {
+	return fmt.Sprintf("invalid user_id: %q", e.UserID)
+}
 
 func (api *API) InitTeam() {
 	api.BaseRoutes.Teams.Handle("", api.ApiSessionRequired(createTeam)).Methods("POST")
@@ -388,6 +397,17 @@ func addTeamMember(c *Context, w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	jerr := usersCanJoinTeam(c.App, []string{member.UserId}, member.TeamId)
+	if jerr != nil {
+		if v, ok := jerr.(invalidUserIDError); ok {
+			c.Err = model.NewAppError("addTeamMember", "api.team.add_members.user_denied", map[string]interface{}{"UserID": v.UserID}, "", http.StatusBadRequest)
+		}
+		if v, ok := jerr.(*model.AppError); ok {
+			c.Err = v
+		}
+		return
+	}
+
 	member, err = c.App.AddTeamMember(member.TeamId, member.UserId)
 
 	if err != nil {
@@ -432,8 +452,29 @@ func addTeamMembers(c *Context, w http.ResponseWriter, r *http.Request) {
 	var err *model.AppError
 	members := model.TeamMembersFromJson(r.Body)
 
-	if len(members) > MAX_ADD_MEMBERS_BATCH || len(members) == 0 {
+	if len(members) > MAX_ADD_MEMBERS_BATCH {
 		c.SetInvalidParam("too many members in batch")
+		return
+	}
+
+	if len(members) == 0 {
+		c.SetInvalidParam("no members in batch")
+		return
+	}
+
+	var memberIDs []string
+	for _, member := range members {
+		memberIDs = append(memberIDs, member.UserId)
+	}
+
+	jerr := usersCanJoinTeam(c.App, memberIDs, c.Params.TeamId)
+	if jerr != nil {
+		if v, ok := jerr.(invalidUserIDError); ok {
+			c.Err = model.NewAppError("addTeamMembers", "api.team.add_members.user_denied", map[string]interface{}{"UserID": v.UserID}, "", http.StatusBadRequest)
+		}
+		if v, ok := jerr.(*model.AppError); ok {
+			c.Err = v
+		}
 		return
 	}
 
@@ -958,4 +999,39 @@ func updateTeamScheme(c *Context, w http.ResponseWriter, r *http.Request) {
 	}
 
 	ReturnStatusOK(w)
+}
+
+// usersCanJoinTeam verifies that the users can join the team based on any group-constraints on the team.
+func usersCanJoinTeam(a *app.App, userIDs []string, teamID string) error {
+	team, err := a.GetTeam(teamID)
+	if err != nil {
+		return err
+	}
+
+	// all users are permitted in non-group-constrained teams, return without error
+	if team.GroupConstrained == nil || !*team.GroupConstrained {
+		return nil
+	}
+
+	permittedUsers, err := a.GetUsersPermittedToTeam(teamID)
+	if err != nil {
+		return err
+	}
+
+	for _, userID := range userIDs {
+		userIsPermitted := false
+
+		for _, pu := range permittedUsers {
+			if pu.Id == userID {
+				userIsPermitted = true
+				break
+			}
+		}
+
+		if !userIsPermitted {
+			return &invalidUserIDError{UserID: userID}
+		}
+	}
+
+	return nil
 }
